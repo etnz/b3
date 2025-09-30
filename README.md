@@ -1,3 +1,5 @@
+![b3-large](b3-large.png)
+
 # B3 - The Bureaucratic Barriers Buster
 
 **B3** is your personal data assistant designed to help you conquer bureaucracy and **be free**.
