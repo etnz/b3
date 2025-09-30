@@ -35,22 +35,18 @@ func (c *loginCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{})
 }
 
 type listCmd struct {
-	long bool
-	// recursive bool // To be implemented later
 }
 
 func (*listCmd) Name() string     { return "list" }
 func (*listCmd) Synopsis() string { return "List files in your B3 Google Drive folder." }
 func (*listCmd) Usage() string {
-	return `list [-l]:
+	return `list:
+
   List files and directories within the user's Google Drive "B3" folder.
-  -l: Use a long listing format.
 `
 }
 
-func (c *listCmd) SetFlags(f *flag.FlagSet) {
-	f.BoolVar(&c.long, "l", false, "Use a long listing format.")
-}
+func (c *listCmd) SetFlags(f *flag.FlagSet) {}
 
 func (c *listCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	app, err := b3app.New(ctx)
@@ -66,11 +62,13 @@ func (c *listCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}
 	}
 
 	for _, file := range files {
-		if c.long {
-			fmt.Printf("%-25s %-12s %-35s %s\n", file.ID, file.Modified.Format("2006-01-02"), file.Name, file.Description)
-		} else {
-			fmt.Println(file.Name)
+		url := fmt.Sprintf("https://drive.google.com/file/d/%s", file.ID)
+
+		fmt.Printf("* [%s](%s)\n", file.Name, url)
+		if file.Description != "" {
+			fmt.Printf("  %s\n", file.Description)
 		}
+		fmt.Println() // Add a blank line for readability
 	}
 	return subcommands.ExitSuccess
 }
