@@ -22,7 +22,7 @@ var googleOauthConfig = &oauth2.Config{
 	ClientID:     "999716078375-50cl3182oudsaom3sfhogg0k57m714c5.apps.googleusercontent.com",
 	ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 	RedirectURL:  "http://localhost:8080",
-	Scopes:       []string{drive.DriveReadonlyScope},
+	Scopes:       []string{drive.DriveScope},
 	Endpoint:     google.Endpoint,
 }
 
