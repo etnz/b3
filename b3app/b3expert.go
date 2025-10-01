@@ -24,10 +24,10 @@ in the B3 metadata (file name and/or description).
 
 // NewB3Expert creates and configures an Expert specifically for the B3 application.
 // This expert knows how to interact with the Google Drive files via the App dependency.
-func NewB3Expert(app *App, contentExpert *Expert) *Expert { // Added contentExpert parameter
+func NewB3Expert(app *App, contentExpert, adminExpert *Expert) *Expert { // Added contentExpert parameter
 	// Define the tool-handling logic specific to the B3 expert.
 	handleToolCall := func(ctx context.Context, fc *genai.FunctionCall) *genai.FunctionResponse {
-		log.Printf("🤖 Calling tool: %s with args %v\n", fc.Name, fc.Args)
+		log.Printf("🤖 Call %s(%v)\n", fc.Name, fc.Args)
 		resp := &genai.FunctionResponse{
 			Name: fc.Name,
 			ID:   fc.ID,
@@ -93,6 +93,8 @@ func NewB3Expert(app *App, contentExpert *Expert) *Expert { // Added contentExpe
 					resp.Response = map[string]any{"output": true}
 				}
 			}
+		case adminExpert.Name:
+			return adminExpert.Call(ctx, fc.ID, fc.Args)
 
 		default:
 			resp.Response = map[string]any{"error": fmt.Sprintf("unknown tool call: %s", fc.Name)}
@@ -100,7 +102,7 @@ func NewB3Expert(app *App, contentExpert *Expert) *Expert { // Added contentExpe
 
 		if e := resp.Response["error"]; e != nil {
 			// Log the error
-			log.Printf("🤖 Calling tool: return error: %v\n", e)
+			log.Printf("🤖 Err: %v\n", e)
 
 		}
 		return resp
@@ -132,12 +134,16 @@ func NewB3Expert(app *App, contentExpert *Expert) *Expert { // Added contentExpe
 						Required: []string{"file_id"},
 					},
 				},
+				adminExpert.Declaration(),
+				// contentExpert.Declaration(),
 			},
 		},
 	}
 
 	expert := NewExpert("B3", "A personal data assistant for Google Drive.")
 	expert.ModelName = "gemini-2.5-pro"
+	expert.Experts = []*Expert{contentExpert, adminExpert}
+
 	expert.Library = handleToolCall
 	expert.Config = &genai.GenerateContentConfig{
 
@@ -174,6 +180,32 @@ func NewContentExpert() *Expert {
 			looks like a well know type of document.
 			If it's a text document, summarize its main points and extract critical details.
 			 Present the extracted information clearly and concisely.`},
+		}},
+	}
+	return expert
+}
+
+// NewAdminExpert creates an expert knowledgeable in administrative procedures.
+// This expert uses Google Search to devise plans for tasks like registering with
+// government agencies and can outline the necessary steps and documents.
+func NewAdminExpert() *Expert {
+	expert := NewExpert("AdminExpert", "An expert on administrative procedures and paperwork.")
+	expert.ModelName = "gemini-2.5-pro" // A powerful model for reasoning and planning
+	expert.Config = &genai.GenerateContentConfig{
+		Tools: []*genai.Tool{
+			{GoogleSearch: &genai.GoogleSearch{}},
+		},
+		SystemInstruction: &genai.Content{Parts: []*genai.Part{
+			{Text: `You are a world-class administrative assistant, an expert in navigating bureaucracy.
+			Your primary role is to help users achieve their administrative goals by providing clear, actionable plans.
+
+			When a user asks for help with a specific task (e.g., 'how do I register for unemployment?', 'what do I need to get a new passport?'), 
+			your process is to help him with a plan:
+				1.  Use Google Search to find the most current, official procedures for the user's specific request and location if provided.
+				2.  Synthesize this information into a step-by-step plan.
+				3.  For each step, clearly list the required documents.
+				4.  Present the final plan to the user in a clear, easy-to-follow format.
+			`},
 		}},
 	}
 	return expert

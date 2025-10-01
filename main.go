@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"log"
 	"os"
 
 	"github.com/etnz/b3/b3app"
@@ -12,6 +14,7 @@ import (
 )
 
 func main() {
+	verboseFlag := flag.Bool("v", false, "Print logs")
 	loginFlag := flag.Bool("login", false, "Authorize the B3 CLI to access your Google Drive.")
 	listFlag := flag.Bool("list", false, "List files in your B3 Google Drive folder as JSON.")
 
@@ -25,6 +28,10 @@ func main() {
 
 	flag.Parse()
 	ctx := context.Background()
+
+	if !*verboseFlag {
+		log.SetOutput(io.Discard)
+	}
 
 	// Handle -login flag
 	if *loginFlag {
@@ -80,8 +87,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	adminExpert := b3app.NewAdminExpert()
+
 	// Create the B3 expert, passing the application context and the content expert.
-	b3Expert := b3app.NewB3Expert(app, contentExpert)
+	b3Expert := b3app.NewB3Expert(app, contentExpert, adminExpert)
 	agent := b3app.NewAgent(b3Expert, os.Stdout, os.Stdin)
 	if err := agent.Run(ctx, args...); err != nil {
 		fmt.Fprintf(os.Stderr, "\nAn error occurred: %v\n", err)

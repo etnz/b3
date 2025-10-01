@@ -25,6 +25,7 @@ type Expert struct {
 	Config      *genai.GenerateContentConfig `json:"config"`
 	Library     Library
 	chat        *genai.Chat
+	Experts     []*Expert // other experts that this one depends on
 }
 
 func NewExpert(name, description string) *Expert {
@@ -40,6 +41,11 @@ func (e *Expert) Start(ctx context.Context, client *genai.Client) error {
 		return err
 	}
 	e.chat = chat
+	for _, expert := range e.Experts {
+		if err := expert.Start(ctx, client); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
