@@ -1,185 +1,79 @@
 package b3app
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
-	"io"
-	"log"
 
+	"github.com/etnz/b3/expert"
 	"google.golang.org/genai"
 )
 
-const b3SystemPrompt = `You are B3, a personal data assistant that lives in the user's terminal. 
-Your mission is to help the user by deeply understanding the documents they have stored in their 'B3' Google Drive folder. 
-You have three tools to help you: refresh() to see the current list of files, content() to read a specific file, and update() to curate the list of documents.
-Your primary workflow is to Refresh, Read, and then Update to continuously enrich your knowledge base about the primary user personal data.
-
-When a file has no description and appears to have been scanned recently, start reading it and create a meaningful description:
- - accurately describes the nature of the document (passport, french identity card)
- - contains directly readable personal data: e.g. full name, identification numbers (like tax ID, security Number, etc.), addresses, important dates.
- - relation of those data with the primary user. Could be his fullname or his daughter's full name, or his mother's fullname, etc.
-Look for apparent conflicts (like multiple identities, or adresses) try to figure out the possible resolution, but ask the user to confirm, and record the solution
-in the B3 metadata (file name and/or description).
-`
-
 // NewB3Expert creates and configures an Expert specifically for the B3 application.
 // This expert knows how to interact with the Google Drive files via the App dependency.
-func NewB3Expert(app *App, contentExpert, adminExpert *Expert) *Expert { // Added contentExpert parameter
-	// Define the tool-handling logic specific to the B3 expert.
-	handleToolCall := func(ctx context.Context, fc *genai.FunctionCall) *genai.FunctionResponse {
-		log.Printf("🤖 Call %s(%v)\n", fc.Name, fc.Args)
-		resp := &genai.FunctionResponse{
-			Name: fc.Name,
-			ID:   fc.ID,
-		}
-
-		switch fc.Name {
-		case "refresh":
-			files, err := app.ListFiles(ctx)
-			// if err == nil {
-			// var jsonData []byte
-			// jsonData, err = json.Marshal(files)
-			if err != nil {
-				resp.Response = map[string]any{"error": err.Error()}
-			} else {
-				resp.Response = map[string]any{"output": files}
-			}
-			// }
-		case "content":
-			if fileID, ok := fc.Args["file_id"].(string); ok {
-				var (
-					content  []byte
-					mimeType string
-				)
-				content, mimeType, err := app.GetFileContent(ctx, fileID)
-				if err != nil {
-					resp.Response = map[string]any{"error": err.Error()}
-					break
-				}
-				xr, err := contentExpert.Ask(ctx, io.Discard, // Use the contentExpert to process the file content
-					&genai.Part{Text: "Provide a detailed description of that file content. Start with the document nature and abstract description"},
-					&genai.Part{InlineData: &genai.Blob{MIMEType: mimeType, Data: content}},
-				)
-
-				if err != nil {
-					resp.Response = map[string]any{"error": err.Error()}
-				} else if len(xr.Parts) > 0 && xr.Parts[0].Text != "" { // Extract the text response from the content expert
-					resp.Response = map[string]any{"output": xr.Parts[0].Text}
-				} else {
-					resp.Response = map[string]any{"error": "content expert returned no text output"}
-				}
-			} else {
-				resp.Response = map[string]any{"error": fmt.Sprintf("invalid 'file_id' argument: %v", fc.Args["file_id"])}
-			}
-
-		case "update":
-			fileID, ok1 := fc.Args["file_id"].(string)
-			// Name and description are optional.
-			name, _ := fc.Args["name"].(string)
-			description, _ := fc.Args["description"].(string)
-
-			if !ok1 {
-				resp.Response = map[string]any{"error": fmt.Sprintf("missing required 'file_id' argument: %v", fc.Args)}
-				break
-			}
-
-			if name == "" && description == "" {
-				resp.Response = map[string]any{"error": "update tool called without 'name' or 'description' to update."}
-			} else {
-				err := app.UpdateFile(ctx, fileID, name, description)
-				if err != nil {
-					resp.Response = map[string]any{"error": err.Error()}
-				} else {
-					resp.Response = map[string]any{"output": true}
-				}
-			}
-		case adminExpert.Name:
-			return adminExpert.Call(ctx, fc.ID, fc.Args)
-
-		default:
-			resp.Response = map[string]any{"error": fmt.Sprintf("unknown tool call: %s", fc.Name)}
-		}
-
-		if e := resp.Response["error"]; e != nil {
-			// Log the error
-			log.Printf("🤖 Err: %v\n", e)
-
-		}
-		return resp
-	}
-
+func NewB3Expert(app *App, b3Files, b4Files []File) *expert.Expert {
 	// Define the functions (tools) the B3 expert can use.
-	tools := []*genai.Tool{
-		{
-			FunctionDeclarations: []*genai.FunctionDeclaration{
-				{
-					Name:        "refresh",
-					Description: "Fetches the most up-to-date index of all files in the user's B3 folder. You should call this at the beginning of a new conversation or if you suspect the user may have added or changed files, as it provides you with your primary context.",
-				},
-				{
-					Name:        "content",
-					Description: "Reads and extract the full detailed content of a single, specific file. Use this when you need to perform a deep analysis of a document, especially one that has a missing or incomplete description.",
-					Parameters:  &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{"file_id": {Type: genai.TypeString, Description: "The unique ID of the file to read."}}, Required: []string{"file_id"}},
-				},
-				{
-					Name:        "update",
-					Description: "Updates the metadata (name and/or description) for a specific file. After you have analyzed a file's content, use this tool to save your findings. This permanently enriches your knowledge base for all future conversations.",
-					Parameters: &genai.Schema{
-						Type: genai.TypeObject,
-						Properties: map[string]*genai.Schema{
-							"file_id":     {Type: genai.TypeString, Description: "The ID of the file to modify."},
-							"name":        {Type: genai.TypeString, Description: "The new name for the file."},
-							"description": {Type: genai.TypeString, Description: "The new text for the file's description."},
-						},
-						Required: []string{"file_id"},
-					},
-				},
-				adminExpert.Declaration(),
-				// contentExpert.Declaration(),
-			},
-		},
-	}
 
-	expert := NewExpert("B3", "A personal data assistant for Google Drive.")
+	// creates the B3 Expert (this one doesn't need, yet, a strong description, it will not be called)
+	expert := expert.NewExpert("B3",
+		"A personal data assistant for Google Drive.",
+		NewAdminExpert(),
+		NewB3FilesTool(app),
+		NewB4FilesTool(app),
+		NewReadFileTool(app),
+		NewB4MergeTool(app),
+		NewDownloadToB4Tool(app),
+		NewUpdateFileTool(app),
+	)
+
+	b3FilesJSON, _ := json.MarshalIndent(b3Files, "", "  ")
+	b4FilesJSON, _ := json.MarshalIndent(b4Files, "", "  ")
+
+	systemPrompt := fmt.Sprintf(`
+You are **B3**, the Bureaucratic Barrier Buster (B3). You are a precise, proactive, and meticulous personal data assistant. You live in the user's terminal and are the sole guardian of their most sensitive data.
+
+* **Your Name:** B3, a pun on "be free." Your mission is to help the user conquer bureaucracy.
+* **Your Domain:** The user's Google Drive, specifically two folders:
+    * **B3:** The permanent, trusted archive of the user's life documents.
+    * **B4 (the B3 Bench):** Your workbench. A temporary space for projects, where documents are prepared *before* they are finalized and potentially moved to B3.
+* **Your Core Principle: Absolute Meticulousness.** You are the user's single interface to their sensitive data. There is no room for error. Every ID number, date, and detail must be treated with surgical precision. Always verify; never assume.
+
+
+B3 tasks: build and maintain a complete, accurate, and living knowledge base of the user's personal data.
+* List files in the **B3** folder. Use their names and descriptions to build a good knowledge about the user you are serving.
+* From the documents, create and maintain a mental profile of the user and all related entities (family members, employers, vehicles, properties, etc.).
+* Actively seek out documents with missing or poor descriptions. Read them, extract all critical data (names, dates, IDs, addresses), and use your tools to **update their descriptions**, turning unstructured data into a structured knowledge base.
+* Proactively look for what's missing. If you have a car registration but not the insurance policy number, or you see references to a spouse but don't have their ID, **ask the user to provide the missing information or document.**
+
+B4 tasks: help the user achieve administrative procedures, seing it through to completion with clarity and efficiency:
+* List files in the B4 Folder. Use the their name and description to understand the current work-in-progress.
+* Update missing or poor files name and descriptions in the B4 folder.
+* Consult the 'AdminExpert' with the relevant personal context.
+	- Answer the 'AdminExpert' questions. Use the info in your profile or search deeper in the B3 and B4 files, or ask the user to provide the info.
+	- Your goal is to get a detailed, step-by-step plan that includes required documents and links to any necessary forms.
+* Execute the Plan or resume it it it's a work in progress.
+    - Gather all required source documents from B3 into a correctly described file in B4.
+    - Download any external forms provided by the 'AdminExpert' into B4.
+    - Use the document manipulation tools to merge, fill, and prepare the final documents within B4.
+    - Update files description with updates and progress and potentially completion.
+* Help the user keep the ball rolling providing next steps until completion.
+* Suggest the user to remove completed documents from B4.
+
+---
+CURRENT FILE INDEX:
+This is the current list of files available to you. Use this as your primary source of truth.
+If you modify a file or the user mentions adding one, you should use the B3Files or B4Files tools to get a fresh list.
+
+B3 Files:
+%s
+
+B4 Files:
+%s
+`, string(b3FilesJSON), string(b4FilesJSON))
+
 	expert.ModelName = "gemini-2.5-pro"
-	expert.Experts = []*Expert{contentExpert, adminExpert}
-
-	expert.Library = handleToolCall
 	expert.Config = &genai.GenerateContentConfig{
-
-		Tools: tools,
 		SystemInstruction: &genai.Content{Parts: []*genai.Part{
-			{Text: b3SystemPrompt},
-		}},
-	}
-	return expert
-}
-
-// NewContentExpert creates and configures an Expert specifically for extracting content from documents.
-// This expert is designed to analyze various document types (text, images, PDFs) and provide a detailed description.
-func NewContentExpert() *Expert {
-	expert := NewExpert("ContentExtractor", "An expert at extracting detailed content from various document types.")
-	expert.ModelName = "gemini-2.5-pro" // Use a multimodal model for robust content extraction
-	// This expert does not use external tools; its role is purely generative based on input.
-	expert.Config = &genai.GenerateContentConfig{
-		Tools: []*genai.Tool{
-			{GoogleSearch: &genai.GoogleSearch{}},
-		},
-		SystemInstruction: &genai.Content{Parts: []*genai.Part{
-			{Text: `You are an expert document content extractor. 
-			Your task is to analyze the provided document content:
-			 - identify its type and official nature of the document, you can use Google search for confirmation.
-			 - extract all relevant information in a structured and detailed manner. 
-			
-			Focus on key entities: 
-			  - personal data
-			  - dates: creation, expiration etc.
-			  - numbers (like identification number, document number, 
-			  - and any other data relative to a person identity. 
-			If the document is an image, describe its visual content and any text present. Try to see if it 
-			looks like a well know type of document.
-			If it's a text document, summarize its main points and extract critical details.
-			 Present the extracted information clearly and concisely.`},
+			{Text: systemPrompt},
 		}},
 	}
 	return expert
@@ -188,25 +82,51 @@ func NewContentExpert() *Expert {
 // NewAdminExpert creates an expert knowledgeable in administrative procedures.
 // This expert uses Google Search to devise plans for tasks like registering with
 // government agencies and can outline the necessary steps and documents.
-func NewAdminExpert() *Expert {
-	expert := NewExpert("AdminExpert", "An expert on administrative procedures and paperwork.")
-	expert.ModelName = "gemini-2.5-pro" // A powerful model for reasoning and planning
-	expert.Config = &genai.GenerateContentConfig{
+func NewAdminExpert() *expert.Expert {
+	exp := expert.NewExpert("Admin",
+		`
+Your primary consultant for navigating bureaucracy.
+
+Delegate any administrative task to this expert to receive a precise, actionable plan.
+
+**Input:** A clear question about an administrative goal (e.g., "How do I renew my driver's license?").
+
+**Output:** Clarifying questions or a detailed, step-by-step procedure that includes:
+- A list of all required supporting documents.
+- Direct links to any official online services or PDF forms that need to be filled out.
+
+The expert maintains the context of the conversation, allowing for follow-up questions to clarify details of the plan.
+`)
+	exp.ModelName = "gemini-2.5-pro" // A powerful model for reasoning and planning
+	exp.Config = &genai.GenerateContentConfig{
 		Tools: []*genai.Tool{
 			{GoogleSearch: &genai.GoogleSearch{}},
 		},
 		SystemInstruction: &genai.Content{Parts: []*genai.Part{
-			{Text: `You are a world-class administrative assistant, an expert in navigating bureaucracy.
-			Your primary role is to help users achieve their administrative goals by providing clear, actionable plans.
+			{Text: `
+You are a world-class administrative expert. Your sole purpose is to provide users with clear, actionable, and trustworthy plans to navigate bureaucracy. You are precise, thorough, and always prioritize official sources.
 
-			When a user asks for help with a specific task (e.g., 'how do I register for unemployment?', 'what do I need to get a new passport?'), 
-			your process is to help him with a plan:
-				1.  Use Google Search to find the most current, official procedures for the user's specific request and location if provided.
-				2.  Synthesize this information into a step-by-step plan.
-				3.  For each step, clearly list the required documents.
-				4.  Present the final plan to the user in a clear, easy-to-follow format.
-			`},
+### Your Mission
+
+To transform complex administrative tasks into simple, step-by-step plans that a user can follow with confidence.
+
+### Your Core Process
+
+For any user request (e.g., "how do I get a passport?"), you must follow this exact process:
+
+0.  **Clarify Context (If Necessary):** First, consider if the procedure depends on personal details (e.g., nationality, marital status, age, employment). If so, ask the user for the relevant information before you begin your research. This ensures your plan is tailored to their specific situation.
+1.  **Research:** Use your Google Search tool to find the most current and official procedures. Prioritize government, city, or official agency websites.
+2.  **Synthesize:** Analyze the search results and distill the information into a concise, step-by-step plan.
+3.  **Detail:** For each step, explicitly list all required documents and provide direct links to any necessary online forms or downloadable PDFs.
+4.  **Present:** Format the final plan in a clear, easy-to-follow structure.
+
+### Guiding Principles
+
+* **Official Sources Only:** Your credibility depends on the quality of your sources. Always base your plan on official government or agency websites.
+* **No Ambiguity:** Be explicit. Clearly state document names, form numbers, and provide direct URLs.
+* **Assume Nothing:** The user is relying on you for a complete plan. Do not leave out steps or assume they know where to find something.
+`},
 		}},
 	}
-	return expert
+	return exp
 }

@@ -10,7 +10,6 @@ import (
 	"os"
 
 	"github.com/etnz/b3/b3app"
-	"google.golang.org/genai"
 )
 
 func main() {
@@ -52,7 +51,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		files, err := app.ListFiles(ctx)
+		files, err := app.B3Files(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -72,25 +71,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	fmt.Fprintln(os.Stderr, "B3 is getting ready, scanning B3 and B4 folders...")
+	b3Files, err := app.B3Files(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing B3 files: %v\n", err)
+		os.Exit(1)
+	}
+	b4Files, err := app.B4Files(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing B4 files: %v\n", err)
+		os.Exit(1)
+	}
+
 	args := flag.Args()
 
-	// Create and start the content expert.
-	// This expert is responsible for reading and summarizing document content.
-	contentExpert := b3app.NewContentExpert()
-	contentClient, err := genai.NewClient(ctx, nil) // Each expert needs its own genai.Client
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create genai client for content expert: %v\n", err)
-		os.Exit(1)
-	}
-	if err := contentExpert.Start(ctx, contentClient); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to start content expert: %v\n", err)
-		os.Exit(1)
-	}
-
-	adminExpert := b3app.NewAdminExpert()
-
 	// Create the B3 expert, passing the application context and the content expert.
-	b3Expert := b3app.NewB3Expert(app, contentExpert, adminExpert)
+	b3Expert := b3app.NewB3Expert(app, b3Files, b4Files)
 	agent := b3app.NewAgent(b3Expert, os.Stdout, os.Stdin)
 	if err := agent.Run(ctx, args...); err != nil {
 		fmt.Fprintf(os.Stderr, "\nAn error occurred: %v\n", err)
