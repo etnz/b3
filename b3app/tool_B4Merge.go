@@ -28,7 +28,8 @@ func (t *B4MergeTool) Start(ctx context.Context, client *genai.Client, logger ex
 func (t *B4MergeTool) Declare() genai.FunctionDeclaration {
 	return genai.FunctionDeclaration{
 		Name: "B4Merge",
-		Description: `Merges several PDF files into a new single PDF file inside the B4 folder.
+		Description: `Merges several PDF or Google Doc files into a new single PDF file inside the B4 folder.
+		Google Docs will be automatically converted to PDF before merging.
 		It can either create a new file or append the content to an existing file.
 		Source files can be optionally deleted after the merge, but only from the B4 folder.`,
 		Parameters: &genai.Schema{
@@ -36,7 +37,7 @@ func (t *B4MergeTool) Declare() genai.FunctionDeclaration {
 			Properties: map[string]*genai.Schema{
 				"file_ids": {
 					Type:        genai.TypeArray,
-					Description: "An array of unique FileIDs for the PDF files to be merged.",
+					Description: "An array of unique FileIDs for the PDF and Google Doc files to be merged.",
 					Items:       &genai.Schema{Type: genai.TypeString},
 				},
 				"output_name": {
@@ -138,14 +139,26 @@ func (t *B4MergeTool) Call(ctx context.Context, args map[string]any) (resp genai
 	}
 
 	for _, id := range fileIDs {
-		content, mimeType, err := t.app.GetFileContent(ctx, id)
+		fileMeta, err := t.app.DriveService.Files.Get(id).Fields("mimeType").Do()
 		if err != nil {
-			resp.Response["error"] = fmt.Sprintf("getting content for file %s: %s", id, err)
+			resp.Response["error"] = fmt.Sprintf("failed to get metadata for file %s: %v", id, err)
 			return
 		}
-		if mimeType != "application/pdf" {
-			resp.Response["error"] = fmt.Sprintf("file %s is not a PDF (%s), cannot merge", id, mimeType)
-			return
+
+		var content []byte
+
+		if fileMeta.MimeType == "application/pdf" {
+			content, _, err = t.app.GetFileContent(ctx, id)
+			if err != nil {
+				resp.Response["error"] = fmt.Sprintf("getting content for file %s: %s", id, err)
+				return
+			}
+		} else {
+			content, err = t.app.ExportFile(ctx, id, "application/pdf")
+			if err != nil {
+				resp.Response["error"] = fmt.Sprintf("file %s is not a PDF (%s), cannot merge", id, fileMeta.MimeType)
+				return
+			}
 		}
 
 		tmpFile, err := os.CreateTemp("", "b3-merge-*.pdf")

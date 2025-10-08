@@ -185,6 +185,22 @@ func (a *App) uploadLocalFile(ctx context.Context, localPath, name, description,
 	return newFile, nil
 }
 
+// ExportFile downloads a Google Workspace document (like a Google Doc) by exporting it to a specified MIME type.
+func (a *App) ExportFile(ctx context.Context, fileID, mimeType string) ([]byte, error) {
+	resp, err := a.DriveService.Files.Export(fileID, mimeType).Download()
+	if err != nil {
+		return nil, fmt.Errorf("unable to export file %s to %s: %w", fileID, mimeType, err)
+	}
+	defer resp.Body.Close()
+
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read content of exported file %s: %w", fileID, err)
+	}
+
+	return content, nil
+}
+
 // isFileInFolder checks if a file is a descendant of a specific folder.
 func (a *App) isFileInFolder(ctx context.Context, fileID, folderID string) (bool, error) {
 	file, err := a.DriveService.Files.Get(fileID).Fields("parents").Do()
