@@ -184,3 +184,57 @@ func (a *App) uploadLocalFile(ctx context.Context, localPath, name, description,
 	}
 	return newFile, nil
 }
+
+// isFileInFolder checks if a file is a descendant of a specific folder.
+func (a *App) isFileInFolder(ctx context.Context, fileID, folderID string) (bool, error) {
+	file, err := a.DriveService.Files.Get(fileID).Fields("parents").Do()
+	if err != nil {
+		return false, fmt.Errorf("unable to get file metadata for %s: %w", fileID, err)
+	}
+
+	for _, parentID := range file.Parents {
+		if parentID == folderID {
+			return true, nil
+		}
+		// Recursively check parent folders
+		isInFolder, err := a.isFileInFolder(ctx, parentID, folderID)
+		if err == nil && isInFolder {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// DeleteFile permanently deletes a file from Google Drive, but only if it's in the B4 folder.
+func (a *App) DeleteFile(ctx context.Context, fileID string) error {
+	b4FolderID, err := a.findB4FolderID(ctx)
+	if err != nil {
+		return err
+	}
+
+	isSafeToDelete, err := a.isFileInFolder(ctx, fileID, b4FolderID)
+	if err != nil {
+		return fmt.Errorf("could not verify file location for deletion: %w", err)
+	}
+
+	if !isSafeToDelete {
+		return fmt.Errorf("safety check failed: file %s is not in the B4 folder and will not be deleted", fileID)
+	}
+
+	err = a.DriveService.Files.Delete(fileID).Do()
+	if err != nil {
+		return fmt.Errorf("failed to delete file with ID %s: %w", fileID, err)
+	}
+	return nil
+}
+
+// UpdateFileContent updates the content of a specific file.
+func (a *App) UpdateFileContent(ctx context.Context, fileID, mimeType string, content io.Reader) (*File, error) {
+	updatedFile, err := a.DriveService.Files.Update(fileID, &drive.File{MimeType: mimeType}).Context(ctx).Media(content).Fields("id", "name").Do()
+	if err != nil {
+		return nil, fmt.Errorf("could not update file '%s': %w", fileID, err)
+	}
+
+	return &File{ID: updatedFile.Id, Name: updatedFile.Name}, nil
+}

@@ -22,6 +22,7 @@ func NewB3Expert(app *App, b3Files, b4Files []File) *expert.Expert {
 		NewReadFileTool(app),
 		NewB4MergeTool(app),
 		NewDownloadToB4Tool(app),
+		NewB4DeleteTool(app),
 		NewUpdateFileTool(app),
 	)
 
