@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/api/drive/v3"
@@ -132,7 +133,7 @@ func (a *App) GetFileContent(ctx context.Context, fileID string) ([]byte, string
 
 // UpdateFile updates the metadata (name and/or description) of a specific file.
 // Pass an empty string for a field if you don't want to update it.
-func (a *App) UpdateFile(ctx context.Context, fileID, newName, newDescription string) error {
+func (a *App) UpdateFile(ctx context.Context, fileID, newName, newDescription string, archive bool) error {
 	fileToUpdate := &drive.File{}
 	var fieldsToUpdate []googleapi.Field
 
@@ -149,7 +150,51 @@ func (a *App) UpdateFile(ctx context.Context, fileID, newName, newDescription st
 		return nil // Nothing to update
 	}
 
-	_, err := a.DriveService.Files.Update(fileID, fileToUpdate).Fields(fieldsToUpdate...).Do()
+	if _, err := a.DriveService.Files.Update(fileID, fileToUpdate).Fields(fieldsToUpdate...).Do(); err != nil {
+		return fmt.Errorf("failed to update metadata for file %s: %w", fileID, err)
+	}
+
+	if archive {
+		return a.MoveToB3(ctx, fileID)
+	}
+
+	return nil
+}
+
+// MoveToB3 moves a file to the B3 folder, if it's not already there.
+func (a *App) MoveToB3(ctx context.Context, fileID string) error {
+	b3FolderID, err := a.findB3FolderID(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Check if the file is already in the B3 folder hierarchy.
+	inB3, err := a.isFileInFolder(ctx, fileID, b3FolderID)
+	if err != nil {
+		return fmt.Errorf("could not verify if file %s is in B3 folder: %w", fileID, err)
+	}
+	if inB3 {
+		return nil // Already in B3, do nothing.
+	}
+
+	// Get the file's current parents to remove them.
+	file, err := a.DriveService.Files.Get(fileID).Fields("parents").Do()
+	if err != nil {
+		return fmt.Errorf("unable to get parents for file %s: %w", fileID, err)
+	}
+
+	if len(file.Parents) == 0 {
+		// File is in root, just add it to B3.
+		_, err = a.DriveService.Files.Update(fileID, &drive.File{}).AddParents(b3FolderID).Context(ctx).Do()
+		return err
+	}
+
+	// Move the file by adding it to B3 and removing it from its old parents.
+	_, err = a.DriveService.Files.Update(fileID, &drive.File{}).
+		AddParents(b3FolderID).
+		RemoveParents(strings.Join(file.Parents, ",")).
+		Context(ctx).Do()
+
 	return err
 }
 

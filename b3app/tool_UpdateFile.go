@@ -27,8 +27,11 @@ func (t *UpdateFileTool) Declare() genai.FunctionDeclaration {
 	return genai.FunctionDeclaration{
 		Name: "UpdateFile",
 		Description: `Updates the metadata (name and/or description) for a specific file. 
-		After you have analyzed a file's content, use this tool to save your findings. 
-		This permanently improves the B3 knowledge base for all future conversations.
+		The file name should be descriptive of the document nature, the description should 
+		describe the file content in detail, contains all the relevant personal information contained
+		in the file, as well as the relationship with the primary identity, and any extra relevant information
+		that might have been captured in the discussion.
+		Optionally, for files in the B4 folder, an 'archive' option will move them to the B3 folder.
 		Returns true on success.
 		`,
 		Parameters: &genai.Schema{
@@ -37,6 +40,7 @@ func (t *UpdateFileTool) Declare() genai.FunctionDeclaration {
 				"file_id":     {Type: genai.TypeString, Description: "The unique FileID of the file to modify."},
 				"name":        {Type: genai.TypeString, Description: "The new name for the file."},
 				"description": {Type: genai.TypeString, Description: "The new text for the file's description."},
+				"archive":     {Type: genai.TypeBoolean, Description: "when true, and the file will be moved to the B4 folder."},
 			},
 			Required: []string{"file_id"},
 		},
@@ -67,6 +71,8 @@ func (t *UpdateFileTool) Call(ctx context.Context, args map[string]any) (resp ge
 		resp.Response["error"] = "update tool called without 'name' or 'description' to update."
 		return
 	}
+	archive, _ := args["archive"].(bool)
+	// arch will be true iif the parameter is there and its value is true
 
 	var updates []string
 	if name != "" {
@@ -75,9 +81,10 @@ func (t *UpdateFileTool) Call(ctx context.Context, args map[string]any) (resp ge
 	if description != "" {
 		updates = append(updates, "description")
 	}
+
 	t.logger.LogQuestion("UpdateFile", fmt.Sprintf("Update file %s: set %s.", fileID, strings.Join(updates, " and ")))
 
-	err := t.app.UpdateFile(ctx, fileID, name, description)
+	err := t.app.UpdateFile(ctx, fileID, name, description, archive)
 	if err != nil {
 		resp.Response["error"] = err.Error()
 		return
